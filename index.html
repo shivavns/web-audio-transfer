@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Web Audio Transfer</title>
+<meta name="description" content="Send your PC’s audio to your phone or any device with a 6-digit code. No install, no account.">
+<meta name="theme-color" content="#0b1020">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🔊%3C/text%3E%3C/svg%3E">
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<style>
+:root{--bg:#f4f5fb;--bg2:#e9ecfa;--card:#fff;--text:#12152b;--muted:#6a6f8a;--line:#e1e4f2;--accent:#5b5bf0;--accent2:#8b5cf6;--accent-text:#fff;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;--shadow:0 8px 30px rgba(40,50,120,.08)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b1020;--bg2:#141a35;--card:#141a2e;--text:#eef0ff;--muted:#8d93b5;--line:#252c4a;--accent:#7c7cff;--accent2:#a78bfa;--accent-text:#0b1020;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--shadow:0 8px 30px rgba(0,0,0,.35)}}
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;color:var(--text);font:16px/1.5 Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:radial-gradient(900px 500px at 80% -10%,var(--bg2),transparent),var(--bg)}
+main{max-width:520px;margin:0 auto;padding:28px 16px 48px}
+header{text-align:center;margin-bottom:20px}
+.logo{width:56px;height:56px;border-radius:16px;margin:0 auto 12px;display:grid;place-items:center;background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:0 10px 28px rgba(91,91,240,.35)}
+.logo svg{width:30px;height:30px}
+h1{font-size:1.7rem;letter-spacing:-.02em;margin:0 0 4px}
+header p{margin:0;color:var(--muted)}
+.seg{display:grid;grid-template-columns:1fr 1fr;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px;margin-bottom:14px;box-shadow:var(--shadow)}
+.seg button{border:0;background:none;color:var(--muted);font:inherit;font-weight:600;padding:11px;border-radius:10px;cursor:pointer;transition:.15s}
+.seg button.on{background:linear-gradient(135deg,var(--accent),var(--accent2));color:var(--accent-text)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:22px;box-shadow:var(--shadow);text-align:center}
+.card h2{margin:0 0 4px;font-size:1.15rem}
+.card p.sub{margin:0 0 18px;color:var(--muted);font-size:.92rem}
+.btn{font:inherit;font-weight:600;padding:14px 18px;border-radius:14px;border:1px solid var(--line);background:var(--bg);color:var(--text);cursor:pointer;width:100%;transition:.15s}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));color:var(--accent-text);border-color:transparent;font-size:1.02rem}
+.btn.ghost{margin-top:10px}
+.code{font:700 2.6rem/1.1 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.12em;margin:6px 0 2px;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent;user-select:all}
+.label{color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+.qr{background:#fff;border-radius:14px;padding:8px;width:170px;height:170px;margin:14px auto 4px;border:1px solid var(--line)}
+.qr svg{width:100%;height:100%;display:block}
+input.codein{width:100%;font:700 2rem/1.2 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.2em;text-align:center;padding:14px;border-radius:14px;border:2px solid var(--line);background:var(--bg);color:var(--text);margin-bottom:12px;outline:none}
+input.codein:focus{border-color:var(--accent)}
+.pill{display:flex;align-items:center;gap:10px;justify-content:center;margin:16px auto 0;padding:9px 14px;border-radius:999px;background:var(--bg);border:1px solid var(--line);width:fit-content;max-width:100%;font-size:.9rem;font-weight:600}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--muted);flex:none}
+.pill[data-s=wait] .dot{background:var(--warn);animation:pulse 1.2s infinite}
+.pill[data-s=ok] .dot{background:var(--ok);box-shadow:0 0 0 4px color-mix(in srgb,var(--ok) 25%,transparent)}
+.pill[data-s=bad] .dot{background:var(--bad)}
+@keyframes pulse{50%{opacity:.35}}
+canvas.meter{width:100%;height:56px;display:block;border-radius:12px;background:var(--bg);margin-top:16px}
+input[type=range]{width:100%;accent-color:var(--accent);margin-top:14px}
+.hint{color:var(--muted);font-size:.84rem;margin:14px 0 0}
+.hide{display:none!important}
+footer{text-align:center;color:var(--muted);font-size:.8rem;margin-top:18px}
+</style>
+</head>
+<body>
+<main>
+<header>
+<div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M3 10v4M7 7v10M11 4v16M15 8v8M19 10v4M22 11.5v1"/></svg></div>
+<h1>Web Audio Transfer</h1>
+<p>Play your PC’s sound on your phone. Just enter a code.</p>
+</header>
+
+<div class="seg"><button id="tabS" class="on">Send (PC)</button><button id="tabR">Receive (phone)</button></div>
+
+<section id="send" class="card">
+<div id="sIdle">
+<h2>Share this PC’s audio</h2>
+<p class="sub">Everything playing on this computer will be sent to your other devices.</p>
+<button class="btn primary" id="startS">Start sharing</button>
+<p class="hint">Choose <b>Entire screen</b> in the popup and keep <b>Share system audio</b> ticked. (Chrome or Edge on Windows. On Mac or Linux, pick a browser tab instead.)</p>
+</div>
+<div id="sLive" class="hide">
+<div class="label">Enter this code on the other device</div>
+<div class="code" id="codeS">······</div>
+<div class="qr" id="qr"></div>
+<div class="label" style="margin-top:6px">or scan with your phone camera</div>
+<canvas class="meter" id="meterS" width="600" height="56"></canvas>
+<button class="btn ghost" id="stopS">Stop sharing</button>
+</div>
+<div class="pill" id="pillS" data-s="idle"><span class="dot"></span><span id="statS">Ready</span></div>
+</section>
+
+<section id="recv" class="card hide">
+<div id="rIdle">
+<h2>Receive audio</h2>
+<p class="sub">Type the 6-digit code shown on the sending PC.</p>
+<input class="codein" id="codeR" inputmode="numeric" autocomplete="off" maxlength="7" placeholder="000000" aria-label="6-digit code">
+<button class="btn primary" id="startR">Connect</button>
+</div>
+<div id="rLive" class="hide">
+<canvas class="meter" id="meterR" width="600" height="56"></canvas>
+<input type="range" id="vol" min="0" max="1" step="0.01" value="1" aria-label="Volume">
+<button class="btn primary ghost hide" id="play">Tap to start playback</button>
+<button class="btn ghost" id="stopR">Disconnect</button>
+</div>
+<div class="pill" id="pillR" data-s="idle"><span class="dot"></span><span id="statR">Ready</span></div>
+<audio id="out" playsinline></audio>
+</section>
+
+<footer>Audio streams directly between your devices (peer-to-peer). A public broker is used only for the handshake.</footer>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const PFX='webaudiotransfer-';
+const PEER_CFG={config:{iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:global.stun.twilio.com:3478'}]}};
+const tune=sdp=>{const m=sdp.match(/a=rtpmap:(\d+) opus/);return m?sdp.replace(new RegExp('a=fmtp:'+m[1]+' '),'a=fmtp:'+m[1]+' stereo=1;sprop-stereo=1;maxaveragebitrate=192000;'):sdp};
+function st(side,t,s){$('stat'+side).textContent=t;$('pill'+side).dataset.s=s||'idle'}
+function mode(m){$('send').classList.toggle('hide',m!=='s');$('recv').classList.toggle('hide',m!=='r');$('tabS').classList.toggle('on',m==='s');$('tabR').classList.toggle('on',m==='r')}
+$('tabS').onclick=()=>mode('s');$('tabR').onclick=()=>mode('r');
+
+let ac=null,raf={};
+function meter(s,cv,key){
+  cancelAnimationFrame(raf[key]);
+  try{ac=ac||new AudioContext();ac.resume();const an=ac.createAnalyser();an.fftSize=128;ac.createMediaStreamSource(s).connect(an);
+  const buf=new Uint8Array(an.frequencyBinCount),x=cv.getContext('2d'),col=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#5b5bf0';
+  const N=32,w=cv.width/N;
+  (function f(){raf[key]=requestAnimationFrame(f);an.getByteFrequencyData(buf);x.clearRect(0,0,cv.width,cv.height);x.fillStyle=col;
+    for(let i=0;i<N;i++){const h=Math.max(3,buf[Math.floor(i*buf.length*.7/N)]/255*cv.height);x.beginPath();x.roundRect(i*w+2,cv.height-h,w-4,h,3);x.fill()}})();
+  }catch(e){}
+}
+function drawQR(el,text){
+  try{const q=qrcode(0,'M');q.addData(text);q.make();const n=q.getModuleCount(),m=2;let d='';
+  for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(q.isDark(r,c))d+=`M${c+m} ${r+m}h1v1h-1z`;
+  el.innerHTML=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n+2*m} ${n+2*m}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#000"/></svg>`}catch(e){el.innerHTML=''}
+}
+
+/* ---------- Sender ---------- */
+let sPeer=null,sStream=null,sAudio=null;
+function updCount(){const n=[...(sPeer?._calls||[])].length;st('S',n?`${n} device${n>1?'s':''} connected · streaming`:'Waiting for a device…',n?'ok':'wait')}
+function openSenderPeer(tries){
+  const code=String(Math.floor(100000+Math.random()*900000));
+  sPeer=new Peer(PFX+code,PEER_CFG);sPeer._calls=new Set();
+  sPeer.on('open',()=>{
+    $('codeS').textContent=code.slice(0,3)+' '+code.slice(3);
+    drawQR($('qr'),location.origin+location.pathname+'?c='+code);
+    updCount();
+  });
+  sPeer.on('error',e=>{
+    if(e.type==='unavailable-id'&&tries<6){sPeer.destroy();openSenderPeer(tries+1)}
+    else if(e.type==='peer-unavailable'){}
+    else st('S','Network problem ('+e.type+'). Check your internet.','bad');
+  });
+  sPeer.on('connection',conn=>{
+    conn.on('open',()=>{
+      const call=sPeer.call(conn.peer,sAudio,{sdpTransform:tune});
+      sPeer._calls.add(call);conn._call=call;updCount();
+      call.on('close',()=>{sPeer&&sPeer._calls.delete(call);updCount()});
+    });
+    conn.on('close',()=>{if(conn._call){conn._call.close();sPeer&&sPeer._calls.delete(conn._call);updCount()}});
+  });
+  sPeer.on('disconnected',()=>{try{sPeer.reconnect()}catch(e){}});
+}
+$('startS').onclick=async()=>{
+  try{
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getDisplayMedia){st('S','This browser can’t share system audio. Use Chrome or Edge on a PC.','bad');return}
+    sStream=await navigator.mediaDevices.getDisplayMedia({video:true,audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+    const tr=sStream.getAudioTracks()[0];
+    if(!tr){sStream.getTracks().forEach(t=>t.stop());sStream=null;st('S','No audio was shared. Tick “Share system audio” and try again.','bad');return}
+    sStream.getVideoTracks().forEach(t=>t.stop());
+    tr.contentHint='music';tr.onended=stopSend;
+    sAudio=new MediaStream([tr]);
+    $('sIdle').classList.add('hide');$('sLive').classList.remove('hide');
+    st('S','Creating code…','wait');
+    meter(sAudio,$('meterS'),'s');
+    openSenderPeer(0);
+  }catch(e){st('S',e.name==='NotAllowedError'?'Sharing was cancelled':'Could not start: '+e.message,e.name==='NotAllowedError'?'idle':'bad')}
+};
+function stopSend(){
+  cancelAnimationFrame(raf.s);
+  if(sPeer){try{sPeer.destroy()}catch(e){}sPeer=null}
+  if(sStream)sStream.getTracks().forEach(t=>t.stop());
+  if(sAudio)sAudio.getTracks().forEach(t=>t.stop());
+  sStream=sAudio=null;
+  $('sLive').classList.add('hide');$('sIdle').classList.remove('hide');
+  st('S','Stopped');
+}
+$('stopS').onclick=stopSend;
+
+/* ---------- Receiver ---------- */
+let rPeer=null,rTimer=0;
+$('codeR').oninput=e=>{const d=e.target.value.replace(/\D/g,'').slice(0,6);e.target.value=d.length>3?d.slice(0,3)+' '+d.slice(3):d};
+$('codeR').onkeydown=e=>{if(e.key==='Enter')$('startR').click()};
+function startRecv(){
+  const code=$('codeR').value.replace(/\D/g,'');
+  if(code.length!==6){st('R','Enter the 6-digit code','bad');return}
+  try{localStorage.setItem('wat-last',code)}catch(e){}
+  stopRecv(true);
+  st('R','Connecting…','wait');
+  if(ac)ac.resume();
+  rPeer=new Peer(PEER_CFG);
+  rPeer.on('open',()=>{
+    const conn=rPeer.connect(PFX+code,{reliable:true});
+    rTimer=setTimeout(()=>{st('R','No response. Check the code and that the sender is running.','bad')},12000);
+    conn.on('open',()=>{clearTimeout(rTimer);$('rIdle').classList.add('hide');$('rLive').classList.remove('hide');st('R','Connected · waiting for audio…','wait')});
+    conn.on('close',()=>{st('R','Sender stopped sharing','bad')});
+  });
+  rPeer.on('call',call=>{
+    call.answer();
+    call.on('stream',s=>{
+      try{call.peerConnection.getReceivers().forEach(r=>{try{r.playoutDelayHint=0;r.jitterBufferTarget=0}catch(_){}})}catch(_){}
+      $('out').srcObject=s;meter(s,$('meterR'),'r');
+      $('out').play().then(()=>$('play').classList.add('hide')).catch(()=>$('play').classList.remove('hide'));
+      st('R','Connected · playing','ok');
+    });
+    call.on('close',()=>st('R','Sender stopped sharing','bad'));
+  });
+  rPeer.on('error',e=>{
+    clearTimeout(rTimer);
+    st('R',e.type==='peer-unavailable'?'No sender found with that code':'Network problem ('+e.type+')','bad');
+  });
+}
+function stopRecv(silent){
+  clearTimeout(rTimer);cancelAnimationFrame(raf.r);
+  if(rPeer){try{rPeer.destroy()}catch(e){}rPeer=null}
+  $('out').srcObject=null;
+  $('rLive').classList.add('hide');$('rIdle').classList.remove('hide');$('play').classList.add('hide');
+  if(!silent)st('R','Disconnected');
+}
+$('startR').onclick=startRecv;
+$('stopR').onclick=()=>stopRecv();
+$('play').onclick=()=>{$('out').play();if(ac)ac.resume();$('play').classList.add('hide')};
+$('vol').oninput=e=>$('out').volume=e.target.value;
+
+/* ---------- Startup ---------- */
+(function init(){
+  const q=new URLSearchParams(location.search).get('c');
+  const canSend=!!(navigator.mediaDevices&&navigator.mediaDevices.getDisplayMedia)&&!/Android|iPhone|iPad/i.test(navigator.userAgent);
+  if(q||!canSend)mode('r');
+  let last='';try{last=localStorage.getItem('wat-last')||''}catch(e){}
+  const c=(q||last).replace(/\D/g,'');
+  if(c.length===6){$('codeR').value=c.slice(0,3)+' '+c.slice(3)}
+  if(q){history.replaceState(null,'',location.pathname);st('R','Code filled in. Tap Connect.','wait')}
+})();
+</script>
+</body>
+</html>
