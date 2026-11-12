@@ -105,8 +105,11 @@ footer{text-align:center;color:var(--muted);font-size:.8rem;margin-top:18px}
 <script>
 const $=id=>document.getElementById(id);
 const PFX='webaudiotransfer-';
+/* Optional: paste your own TURN server here for hard networks, e.g.
+   [{urls:'turn:YOUR_HOST:443',username:'USER',credential:'PASS'}] */
+const MY_TURN=[];
 const IOS=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-const PEER_CFG={config:{iceCandidatePoolSize:4,iceServers:[
+const PEER_CFG={config:{iceCandidatePoolSize:4,iceServers:[...MY_TURN,
   {urls:'stun:stun.l.google.com:19302'},
   {urls:'stun:global.stun.twilio.com:3478'},
   {urls:['turn:openrelay.metered.ca:80','turn:openrelay.metered.ca:443','turns:openrelay.metered.ca:443?transport=tcp'],username:'openrelayproject',credential:'openrelayproject'}
@@ -203,7 +206,7 @@ $('stopS').onclick=stopSend;
 let rPeer=null,rPc=null,rTimer=0,rStat=0,rState='';
 $('codeR').oninput=e=>{const d=e.target.value.replace(/\D/g,'').slice(0,6);e.target.value=d.length>3?d.slice(0,3)+' '+d.slice(3):d};
 $('codeR').onkeydown=e=>{if(e.key==='Enter')$('startR').click()};
-function startRecv(){
+async function startRecv(){
   const code=$('codeR').value.replace(/\D/g,'');
   if(code.length!==6){st('R','Enter the 6-digit code','bad');return}
   try{localStorage.setItem('wat-last',code)}catch(e){}
@@ -212,6 +215,7 @@ function startRecv(){
   if(ac)ac.resume();
   if(IOS)try{const o=$('out');o.src='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';o.play().catch(()=>{})}catch(e){}
   log('browser: '+navigator.userAgent);
+  if(IOS){try{const m=await navigator.mediaDevices.getUserMedia({audio:true});m.getTracks().forEach(t=>t.stop());log('mic permission granted (lets Safari share its Wi‑Fi address)')}catch(e){log('mic permission skipped: '+e.name)}}
   rPeer=new Peer(PEER_CFG);
   rPeer.on('open',()=>{
     log('broker connected');
