@@ -94,6 +94,7 @@ footer{text-align:center;color:var(--muted);font-size:.8rem;margin-top:18px}
 </div>
 <div class="pill" id="pillR" data-s="idle"><span class="dot"></span><span id="statR">Ready</span></div>
 <audio id="out" playsinline></audio>
+<details class="hint" style="text-align:left"><summary>Troubleshooting log</summary><pre id="log" style="white-space:pre-wrap;font-size:12px;margin:8px 0 0"></pre></details>
 </section>
 
 <footer>Audio streams directly between your devices (peer-to-peer). A public broker is used only for the handshake.</footer>
@@ -109,7 +110,8 @@ const PEER_CFG={config:{iceCandidatePoolSize:4,iceServers:[
   {urls:['turn:openrelay.metered.ca:80','turn:openrelay.metered.ca:443','turns:openrelay.metered.ca:443?transport=tcp'],username:'openrelayproject',credential:'openrelayproject'}
 ]}};
 const tune=sdp=>{const m=sdp.match(/a=rtpmap:(\d+) opus/);return m?sdp.replace(new RegExp('a=fmtp:'+m[1]+' '),'a=fmtp:'+m[1]+' stereo=1;sprop-stereo=1;maxaveragebitrate=192000;'):sdp};
-function st(side,t,s){$('stat'+side).textContent=t;$('pill'+side).dataset.s=s||'idle'}
+const log=m=>{const l=$('log');if(l)l.textContent+=new Date().toLocaleTimeString()+'  '+m+'\n'};
+function st(side,t,s){log(side+': '+t);$('stat'+side).textContent=t;$('pill'+side).dataset.s=s||'idle'}
 function mode(m){$('send').classList.toggle('hide',m!=='s');$('recv').classList.toggle('hide',m!=='r');$('tabS').classList.toggle('on',m==='s');$('tabR').classList.toggle('on',m==='r')}
 $('tabS').onclick=()=>mode('s');$('tabR').onclick=()=>mode('r');
 
@@ -192,25 +194,30 @@ function startRecv(){
   stopRecv(true);
   st('R','Connecting…','wait');
   if(ac)ac.resume();
+  try{const o=$('out');o.src='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';o.play().catch(()=>{})}catch(e){}
+  log('browser: '+navigator.userAgent);
   rPeer=new Peer(PEER_CFG);
   rPeer.on('open',()=>{
+    log('broker connected, id='+rPeer.id);
     const conn=rPeer.connect(PFX+code,{reliable:true});
     rTimer=setTimeout(()=>{st('R','No response. Check the code, that the sender is running, and that you have internet.','bad')},12000);
-    conn.on('open',()=>{clearTimeout(rTimer);$('rIdle').classList.add('hide');$('rLive').classList.remove('hide');st('R','Connected · waiting for audio…','wait')});
+    conn.on('open',()=>{log('data channel open');clearTimeout(rTimer);$('rIdle').classList.add('hide');$('rLive').classList.remove('hide');st('R','Connected · waiting for audio…','wait')});
     conn.on('close',()=>{st('R','Sender stopped sharing','bad')});
   });
   rPeer.on('call',call=>{
-    call.answer();
-    try{call.peerConnection.oniceconnectionstatechange=()=>{if(call.peerConnection.iceConnectionState==='failed')st('R','Network blocked the connection. Try the same Wi‑Fi on both devices.','bad')}}catch(_){}
+    log('incoming audio call');call.answer();
+    try{call.peerConnection.oniceconnectionstatechange=()=>{log('ice: '+call.peerConnection.iceConnectionState);if(call.peerConnection.iceConnectionState==='failed')st('R','Network blocked the connection. Try the same Wi‑Fi on both devices.','bad')}}catch(_){}
     call.on('stream',s=>{
       try{call.peerConnection.getReceivers().forEach(r=>{try{r.playoutDelayHint=0;r.jitterBufferTarget=0}catch(_){}})}catch(_){}
       $('out').srcObject=s;if(!IOS)meter(s,$('meterR'),'r');
-      $('out').play().then(()=>$('play').classList.add('hide')).catch(()=>$('play').classList.remove('hide'));
+      log('stream received, audio tracks='+s.getAudioTracks().length);
+      $('out').play().then(()=>{log('playing');$('play').classList.add('hide')}).catch(er=>{log('play blocked: '+er.name);$('play').classList.remove('hide')});
       st('R','Connected · playing','ok');
     });
     call.on('close',()=>st('R','Sender stopped sharing','bad'));
   });
   rPeer.on('error',e=>{
+    log('peer error: '+e.type+' '+(e.message||''));
     clearTimeout(rTimer);
     st('R',e.type==='peer-unavailable'?'No sender found with that code':'Network problem ('+e.type+')','bad');
   });
