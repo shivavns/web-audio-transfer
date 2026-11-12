@@ -90,13 +90,10 @@ footer{text-align:center;color:var(--muted);font-size:.8rem;margin-top:18px}
 <canvas class="meter" id="meterR" width="600" height="56"></canvas>
 <input type="range" id="vol" min="0" max="1" step="0.01" value="1" aria-label="Volume">
 <button class="btn primary ghost hide" id="play">Tap to start playback</button>
-<button class="btn ghost" id="beep">Play test beep</button>
-<button class="btn ghost" id="alt">Can’t hear it? Try alternate playback</button>
 <button class="btn ghost" id="stopR">Disconnect</button>
 </div>
 <div class="pill" id="pillR" data-s="idle"><span class="dot"></span><span id="statR">Ready</span></div>
 <audio id="out" playsinline></audio>
-<details class="hint" style="text-align:left"><summary>Troubleshooting log</summary><pre id="log" style="white-space:pre-wrap;font-size:12px;margin:8px 0 0"></pre></details>
 </section>
 
 <footer>Audio streams directly between your devices (peer-to-peer). A public broker is used only for the handshake.</footer>
@@ -105,18 +102,9 @@ footer{text-align:center;color:var(--muted);font-size:.8rem;margin-top:18px}
 <script>
 const $=id=>document.getElementById(id);
 const PFX='webaudiotransfer-';
-/* Optional: paste your own TURN server here for hard networks, e.g.
-   [{urls:'turn:YOUR_HOST:443',username:'USER',credential:'PASS'}] */
-const MY_TURN=[];
-const IOS=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-const PEER_CFG={config:{iceCandidatePoolSize:4,iceServers:[...MY_TURN,
-  {urls:'stun:stun.l.google.com:19302'},
-  {urls:'stun:global.stun.twilio.com:3478'},
-  {urls:['turn:openrelay.metered.ca:80','turn:openrelay.metered.ca:443','turns:openrelay.metered.ca:443?transport=tcp'],username:'openrelayproject',credential:'openrelayproject'}
-]}};
+const PEER_CFG={config:{iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:global.stun.twilio.com:3478'}]}};
 const tune=sdp=>{const m=sdp.match(/a=rtpmap:(\d+) opus/);return m?sdp.replace(new RegExp('a=fmtp:'+m[1]+' '),'a=fmtp:'+m[1]+' stereo=1;sprop-stereo=1;maxaveragebitrate=192000;'):sdp};
-const log=m=>{const l=$('log');if(l)l.textContent+=new Date().toLocaleTimeString()+'  '+m+'\n'};
-function st(side,t,s){log(side+': '+t);$('stat'+side).textContent=t;$('pill'+side).dataset.s=s||'idle'}
+function st(side,t,s){$('stat'+side).textContent=t;$('pill'+side).dataset.s=s||'idle'}
 function mode(m){$('send').classList.toggle('hide',m!=='s');$('recv').classList.toggle('hide',m!=='r');$('tabS').classList.toggle('on',m==='s');$('tabR').classList.toggle('on',m==='r')}
 $('tabS').onclick=()=>mode('s');$('tabR').onclick=()=>mode('r');
 
@@ -127,7 +115,7 @@ function meter(s,cv,key){
   const buf=new Uint8Array(an.frequencyBinCount),x=cv.getContext('2d'),col=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#5b5bf0';
   const N=32,w=cv.width/N;
   (function f(){raf[key]=requestAnimationFrame(f);an.getByteFrequencyData(buf);x.clearRect(0,0,cv.width,cv.height);x.fillStyle=col;
-    for(let i=0;i<N;i++){const h=Math.max(3,buf[Math.floor(i*buf.length*.7/N)]/255*cv.height);x.fillRect(i*w+2,cv.height-h,w-4,h)}})();
+    for(let i=0;i<N;i++){const h=Math.max(3,buf[Math.floor(i*buf.length*.7/N)]/255*cv.height);x.beginPath();x.roundRect(i*w+2,cv.height-h,w-4,h,3);x.fill()}})();
   }catch(e){}
 }
 function drawQR(el,text){
@@ -137,14 +125,11 @@ function drawQR(el,text){
 }
 
 /* ---------- Sender ---------- */
-let sPeer=null,sStream=null,sAudio=null,sLinks=new Set();
-function updCount(){
-  const n=[...sLinks].filter(l=>l.pc.connectionState==='connected').length;
-  st('S',n?`${n} device${n>1?'s':''} connected · streaming`:(sLinks.size?'Connecting device…':'Waiting for a device…'),n?'ok':'wait');
-}
+let sPeer=null,sStream=null,sAudio=null;
+function updCount(){const n=[...(sPeer?._calls||[])].length;st('S',n?`${n} device${n>1?'s':''} connected · streaming`:'Waiting for a device…',n?'ok':'wait')}
 function openSenderPeer(tries){
   const code=String(Math.floor(100000+Math.random()*900000));
-  sPeer=new Peer(PFX+code,PEER_CFG);
+  sPeer=new Peer(PFX+code,PEER_CFG);sPeer._calls=new Set();
   sPeer.on('open',()=>{
     $('codeS').textContent=code.slice(0,3)+' '+code.slice(3);
     drawQR($('qr'),location.origin+location.pathname+'?c='+code);
@@ -152,28 +137,18 @@ function openSenderPeer(tries){
   });
   sPeer.on('error',e=>{
     if(e.type==='unavailable-id'&&tries<6){sPeer.destroy();openSenderPeer(tries+1)}
-    else if(e.type!=='peer-unavailable')st('S','Network problem ('+e.type+'). Check your internet.','bad');
+    else if(e.type==='peer-unavailable'){}
+    else st('S','Network problem ('+e.type+'). Check your internet.','bad');
   });
-  sPeer.on('connection',conn=>conn.on('open',()=>link(conn)));
+  sPeer.on('connection',conn=>{
+    conn.on('open',()=>{
+      const call=sPeer.call(conn.peer,sAudio,{sdpTransform:tune});
+      sPeer._calls.add(call);conn._call=call;updCount();
+      call.on('close',()=>{sPeer&&sPeer._calls.delete(call);updCount()});
+    });
+    conn.on('close',()=>{if(conn._call){conn._call.close();sPeer&&sPeer._calls.delete(conn._call);updCount()}});
+  });
   sPeer.on('disconnected',()=>{try{sPeer.reconnect()}catch(e){}});
-}
-async function link(conn){
-  const pc=new RTCPeerConnection(PEER_CFG.config),L={pc,conn};sLinks.add(L);
-  pc.onicecandidate=e=>{if(e.candidate)conn.send({t:'ice',c:e.candidate.toJSON()})};
-  pc.onconnectionstatechange=()=>{log('link: '+pc.connectionState);updCount()};
-  const tr=sAudio.getAudioTracks()[0];
-  const t=pc.addTransceiver(tr,{direction:'sendonly',streams:[sAudio]});
-  try{t.setCodecPreferences(RTCRtpSender.getCapabilities('audio').codecs.filter(c=>c.mimeType==='audio/opus'))}catch(e){}
-  let chain=Promise.resolve();
-  conn.on('data',d=>{chain=chain.then(async()=>{
-    if(d.t==='answer')await pc.setRemoteDescription({type:'answer',sdp:d.sdp});
-    else if(d.t==='ice')await pc.addIceCandidate(d.c);
-  }).catch(e=>log('signal error: '+e.message))});
-  conn.on('close',()=>{pc.close();sLinks.delete(L);updCount()});
-  const o=await pc.createOffer();
-  await pc.setLocalDescription({type:'offer',sdp:tune(o.sdp)});
-  conn.send({t:'offer',sdp:pc.localDescription.sdp});
-  updCount();
 }
 $('startS').onclick=async()=>{
   try{
@@ -181,7 +156,7 @@ $('startS').onclick=async()=>{
     sStream=await navigator.mediaDevices.getDisplayMedia({video:true,audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
     const tr=sStream.getAudioTracks()[0];
     if(!tr){sStream.getTracks().forEach(t=>t.stop());sStream=null;st('S','No audio was shared. Tick “Share system audio” and try again.','bad');return}
-    sStream.getVideoTracks().forEach(t=>{t.enabled=false});
+    sStream.getVideoTracks().forEach(t=>t.stop());
     tr.contentHint='music';tr.onended=stopSend;
     sAudio=new MediaStream([tr]);
     $('sIdle').classList.add('hide');$('sLive').classList.remove('hide');
@@ -192,7 +167,6 @@ $('startS').onclick=async()=>{
 };
 function stopSend(){
   cancelAnimationFrame(raf.s);
-  sLinks.forEach(l=>{try{l.pc.close()}catch(e){}});sLinks.clear();
   if(sPeer){try{sPeer.destroy()}catch(e){}sPeer=null}
   if(sStream)sStream.getTracks().forEach(t=>t.stop());
   if(sAudio)sAudio.getTracks().forEach(t=>t.stop());
@@ -203,73 +177,42 @@ function stopSend(){
 $('stopS').onclick=stopSend;
 
 /* ---------- Receiver ---------- */
-let rPeer=null,rPc=null,rTimer=0,rStat=0,rState='';
+let rPeer=null,rTimer=0;
 $('codeR').oninput=e=>{const d=e.target.value.replace(/\D/g,'').slice(0,6);e.target.value=d.length>3?d.slice(0,3)+' '+d.slice(3):d};
 $('codeR').onkeydown=e=>{if(e.key==='Enter')$('startR').click()};
-async function startRecv(){
+function startRecv(){
   const code=$('codeR').value.replace(/\D/g,'');
   if(code.length!==6){st('R','Enter the 6-digit code','bad');return}
   try{localStorage.setItem('wat-last',code)}catch(e){}
   stopRecv(true);
   st('R','Connecting…','wait');
   if(ac)ac.resume();
-  if(IOS)try{const o=$('out');o.src='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';o.play().catch(()=>{})}catch(e){}
-  log('browser: '+navigator.userAgent);
-  if(IOS){try{const m=await navigator.mediaDevices.getUserMedia({audio:true});m.getTracks().forEach(t=>t.stop());log('mic permission granted (lets Safari share its Wi‑Fi address)')}catch(e){log('mic permission skipped: '+e.name)}}
   rPeer=new Peer(PEER_CFG);
   rPeer.on('open',()=>{
-    log('broker connected');
     const conn=rPeer.connect(PFX+code,{reliable:true});
-    rTimer=setTimeout(()=>st('R','No response. Check the code, that the sender is running, and that you have internet.','bad'),12000);
-    let chain=Promise.resolve();
-    conn.on('open',()=>{log('sender found');clearTimeout(rTimer);$('rIdle').classList.add('hide');$('rLive').classList.remove('hide');st('R','Connected · negotiating audio…','wait')});
-    conn.on('data',d=>{chain=chain.then(()=>onSignal(conn,d)).catch(e=>log('signal error: '+e.message))});
-    conn.on('close',()=>st('R','Sender stopped sharing','bad'));
+    rTimer=setTimeout(()=>{st('R','No response. Check the code and that the sender is running.','bad')},12000);
+    conn.on('open',()=>{clearTimeout(rTimer);$('rIdle').classList.add('hide');$('rLive').classList.remove('hide');st('R','Connected · waiting for audio…','wait')});
+    conn.on('close',()=>{st('R','Sender stopped sharing','bad')});
+  });
+  rPeer.on('call',call=>{
+    call.answer();
+    call.on('stream',s=>{
+      try{call.peerConnection.getReceivers().forEach(r=>{try{r.playoutDelayHint=0;r.jitterBufferTarget=0}catch(_){}})}catch(_){}
+      $('out').srcObject=s;meter(s,$('meterR'),'r');
+      $('out').play().then(()=>$('play').classList.add('hide')).catch(()=>$('play').classList.remove('hide'));
+      st('R','Connected · playing','ok');
+    });
+    call.on('close',()=>st('R','Sender stopped sharing','bad'));
   });
   rPeer.on('error',e=>{
-    log('peer error: '+e.type+' '+(e.message||''));clearTimeout(rTimer);
+    clearTimeout(rTimer);
     st('R',e.type==='peer-unavailable'?'No sender found with that code':'Network problem ('+e.type+')','bad');
   });
 }
-async function onSignal(conn,d){
-  if(d.t==='offer'){
-    log('offer received');
-    rPc=new RTCPeerConnection(PEER_CFG.config);
-    rPc.onicecandidate=e=>{if(e.candidate)conn.send({t:'ice',c:e.candidate.toJSON()})};
-    rPc.oniceconnectionstatechange=()=>log('ice: '+rPc.iceConnectionState);
-    rPc.onconnectionstatechange=()=>{log('link: '+rPc.connectionState);if(rPc.connectionState==='failed')st('R','Network blocked the audio link. Try the same Wi‑Fi on both devices.','bad')};
-    rPc.ontrack=e=>{
-      const s=e.streams[0]||new MediaStream([e.track]);
-      log('audio track received');
-      $('out').srcObject=s;
-      if(!IOS)meter(s,$('meterR'),'r');
-      $('out').play().then(()=>{log('playback started');$('play').classList.add('hide')}).catch(er=>{log('play blocked: '+er.name);$('play').classList.remove('hide')});
-      watchStats();
-    };
-    await rPc.setRemoteDescription({type:'offer',sdp:d.sdp});
-    await rPc.setLocalDescription(await rPc.createAnswer());
-    conn.send({t:'answer',sdp:rPc.localDescription.sdp});
-  }else if(d.t==='ice'&&rPc){await rPc.addIceCandidate(d.c)}
-}
-function watchStats(){
-  clearInterval(rStat);let last=0,quiet=0,tick=0;rState='';
-  rStat=setInterval(async()=>{
-    if(!rPc)return;
-    try{(await rPc.getStats()).forEach(r=>{
-      if(r.type==='inbound-rtp'&&r.kind==='audio'){
-        const grew=r.bytesReceived>last;last=r.bytesReceived;quiet=grew?0:quiet+1;
-        if(++tick%3===0)log('received '+r.bytesReceived+' bytes, level '+(r.audioLevel||0).toFixed(3));
-        const ns=grew?'ok':(quiet>=4?'bad':'wait');
-        if(ns!==rState){rState=ns;st('R',ns==='ok'?'Connected · receiving audio':ns==='bad'?'Connected, but no audio data is arriving':'Connected · waiting for audio…',ns)}
-      }})}catch(_){}
-  },1000);
-}
 function stopRecv(silent){
-  clearTimeout(rTimer);clearInterval(rStat);cancelAnimationFrame(raf.r);
-  if(rPc){try{rPc.close()}catch(e){}rPc=null}
+  clearTimeout(rTimer);cancelAnimationFrame(raf.r);
   if(rPeer){try{rPeer.destroy()}catch(e){}rPeer=null}
-  $('out').srcObject=null;$('out').muted=false;
-  try{if(altSrc)altSrc.disconnect()}catch(e){}altOn=false;$('alt').textContent='Can’t hear it? Try alternate playback';
+  $('out').srcObject=null;
   $('rLive').classList.add('hide');$('rIdle').classList.remove('hide');$('play').classList.add('hide');
   if(!silent)st('R','Disconnected');
 }
@@ -277,20 +220,6 @@ $('startR').onclick=startRecv;
 $('stopR').onclick=()=>stopRecv();
 $('play').onclick=()=>{$('out').play();if(ac)ac.resume();$('play').classList.add('hide')};
 $('vol').oninput=e=>$('out').volume=e.target.value;
-
-/* ---------- Playback helpers ---------- */
-let altOn=false,altSrc=null;
-$('beep').onclick=()=>{
-  try{ac=ac||new AudioContext();ac.resume();const o=ac.createOscillator(),g=ac.createGain();g.gain.value=.2;o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+.6);log('test beep played')}catch(e){log('beep failed: '+e.message)}
-};
-$('alt').onclick=()=>{
-  const s=$('out').srcObject;if(!s){log('no stream yet');return}
-  try{
-    ac=ac||new AudioContext();ac.resume();
-    if(!altOn){$('out').muted=true;altSrc=ac.createMediaStreamSource(s);altSrc.connect(ac.destination);altOn=true;$('alt').textContent='Back to normal playback';log('alternate playback on')}
-    else{try{altSrc.disconnect()}catch(e){}$('out').muted=false;altOn=false;$('alt').textContent='Can’t hear it? Try alternate playback';log('alternate playback off')}
-  }catch(e){log('alt failed: '+e.message)}
-};
 
 /* ---------- Startup ---------- */
 (function init(){
