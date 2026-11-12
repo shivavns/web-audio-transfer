@@ -102,7 +102,12 @@ footer{text-align:center;color:var(--muted);font-size:.8rem;margin-top:18px}
 <script>
 const $=id=>document.getElementById(id);
 const PFX='webaudiotransfer-';
-const PEER_CFG={config:{iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:global.stun.twilio.com:3478'}]}};
+const IOS=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+const PEER_CFG={config:{iceCandidatePoolSize:4,iceServers:[
+  {urls:'stun:stun.l.google.com:19302'},
+  {urls:'stun:global.stun.twilio.com:3478'},
+  {urls:['turn:openrelay.metered.ca:80','turn:openrelay.metered.ca:443','turns:openrelay.metered.ca:443?transport=tcp'],username:'openrelayproject',credential:'openrelayproject'}
+]}};
 const tune=sdp=>{const m=sdp.match(/a=rtpmap:(\d+) opus/);return m?sdp.replace(new RegExp('a=fmtp:'+m[1]+' '),'a=fmtp:'+m[1]+' stereo=1;sprop-stereo=1;maxaveragebitrate=192000;'):sdp};
 function st(side,t,s){$('stat'+side).textContent=t;$('pill'+side).dataset.s=s||'idle'}
 function mode(m){$('send').classList.toggle('hide',m!=='s');$('recv').classList.toggle('hide',m!=='r');$('tabS').classList.toggle('on',m==='s');$('tabR').classList.toggle('on',m==='r')}
@@ -115,7 +120,7 @@ function meter(s,cv,key){
   const buf=new Uint8Array(an.frequencyBinCount),x=cv.getContext('2d'),col=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#5b5bf0';
   const N=32,w=cv.width/N;
   (function f(){raf[key]=requestAnimationFrame(f);an.getByteFrequencyData(buf);x.clearRect(0,0,cv.width,cv.height);x.fillStyle=col;
-    for(let i=0;i<N;i++){const h=Math.max(3,buf[Math.floor(i*buf.length*.7/N)]/255*cv.height);x.beginPath();x.roundRect(i*w+2,cv.height-h,w-4,h,3);x.fill()}})();
+    for(let i=0;i<N;i++){const h=Math.max(3,buf[Math.floor(i*buf.length*.7/N)]/255*cv.height);x.fillRect(i*w+2,cv.height-h,w-4,h)}})();
   }catch(e){}
 }
 function drawQR(el,text){
@@ -190,15 +195,16 @@ function startRecv(){
   rPeer=new Peer(PEER_CFG);
   rPeer.on('open',()=>{
     const conn=rPeer.connect(PFX+code,{reliable:true});
-    rTimer=setTimeout(()=>{st('R','No response. Check the code and that the sender is running.','bad')},12000);
+    rTimer=setTimeout(()=>{st('R','No response. Check the code, that the sender is running, and that you have internet.','bad')},12000);
     conn.on('open',()=>{clearTimeout(rTimer);$('rIdle').classList.add('hide');$('rLive').classList.remove('hide');st('R','Connected · waiting for audio…','wait')});
     conn.on('close',()=>{st('R','Sender stopped sharing','bad')});
   });
   rPeer.on('call',call=>{
     call.answer();
+    try{call.peerConnection.oniceconnectionstatechange=()=>{if(call.peerConnection.iceConnectionState==='failed')st('R','Network blocked the connection. Try the same Wi‑Fi on both devices.','bad')}}catch(_){}
     call.on('stream',s=>{
       try{call.peerConnection.getReceivers().forEach(r=>{try{r.playoutDelayHint=0;r.jitterBufferTarget=0}catch(_){}})}catch(_){}
-      $('out').srcObject=s;meter(s,$('meterR'),'r');
+      $('out').srcObject=s;if(!IOS)meter(s,$('meterR'),'r');
       $('out').play().then(()=>$('play').classList.add('hide')).catch(()=>$('play').classList.remove('hide'));
       st('R','Connected · playing','ok');
     });
