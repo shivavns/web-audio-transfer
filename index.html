@@ -134,11 +134,14 @@ function drawQR(el,text){
 }
 
 /* ---------- Sender ---------- */
-let sPeer=null,sStream=null,sAudio=null;
-function updCount(){const n=[...(sPeer?._calls||[])].length;st('S',n?`${n} device${n>1?'s':''} connected · streaming`:'Waiting for a device…',n?'ok':'wait')}
+let sPeer=null,sStream=null,sAudio=null,sLinks=new Set();
+function updCount(){
+  const n=[...sLinks].filter(l=>l.pc.connectionState==='connected').length;
+  st('S',n?`${n} device${n>1?'s':''} connected · streaming`:(sLinks.size?'Connecting device…':'Waiting for a device…'),n?'ok':'wait');
+}
 function openSenderPeer(tries){
   const code=String(Math.floor(100000+Math.random()*900000));
-  sPeer=new Peer(PFX+code,PEER_CFG);sPeer._calls=new Set();
+  sPeer=new Peer(PFX+code,PEER_CFG);
   sPeer.on('open',()=>{
     $('codeS').textContent=code.slice(0,3)+' '+code.slice(3);
     drawQR($('qr'),location.origin+location.pathname+'?c='+code);
@@ -146,18 +149,28 @@ function openSenderPeer(tries){
   });
   sPeer.on('error',e=>{
     if(e.type==='unavailable-id'&&tries<6){sPeer.destroy();openSenderPeer(tries+1)}
-    else if(e.type==='peer-unavailable'){}
-    else st('S','Network problem ('+e.type+'). Check your internet.','bad');
+    else if(e.type!=='peer-unavailable')st('S','Network problem ('+e.type+'). Check your internet.','bad');
   });
-  sPeer.on('connection',conn=>{
-    conn.on('open',()=>{
-      const call=sPeer.call(conn.peer,sAudio,{sdpTransform:tune});
-      sPeer._calls.add(call);conn._call=call;updCount();
-      call.on('close',()=>{sPeer&&sPeer._calls.delete(call);updCount()});
-    });
-    conn.on('close',()=>{if(conn._call){conn._call.close();sPeer&&sPeer._calls.delete(conn._call);updCount()}});
-  });
+  sPeer.on('connection',conn=>conn.on('open',()=>link(conn)));
   sPeer.on('disconnected',()=>{try{sPeer.reconnect()}catch(e){}});
+}
+async function link(conn){
+  const pc=new RTCPeerConnection(PEER_CFG.config),L={pc,conn};sLinks.add(L);
+  pc.onicecandidate=e=>{if(e.candidate)conn.send({t:'ice',c:e.candidate.toJSON()})};
+  pc.onconnectionstatechange=()=>{log('link: '+pc.connectionState);updCount()};
+  const tr=sAudio.getAudioTracks()[0];
+  const t=pc.addTransceiver(tr,{direction:'sendonly',streams:[sAudio]});
+  try{t.setCodecPreferences(RTCRtpSender.getCapabilities('audio').codecs.filter(c=>c.mimeType==='audio/opus'))}catch(e){}
+  let chain=Promise.resolve();
+  conn.on('data',d=>{chain=chain.then(async()=>{
+    if(d.t==='answer')await pc.setRemoteDescription({type:'answer',sdp:d.sdp});
+    else if(d.t==='ice')await pc.addIceCandidate(d.c);
+  }).catch(e=>log('signal error: '+e.message))});
+  conn.on('close',()=>{pc.close();sLinks.delete(L);updCount()});
+  const o=await pc.createOffer();
+  await pc.setLocalDescription({type:'offer',sdp:tune(o.sdp)});
+  conn.send({t:'offer',sdp:pc.localDescription.sdp});
+  updCount();
 }
 $('startS').onclick=async()=>{
   try{
@@ -176,6 +189,7 @@ $('startS').onclick=async()=>{
 };
 function stopSend(){
   cancelAnimationFrame(raf.s);
+  sLinks.forEach(l=>{try{l.pc.close()}catch(e){}});sLinks.clear();
   if(sPeer){try{sPeer.destroy()}catch(e){}sPeer=null}
   if(sStream)sStream.getTracks().forEach(t=>t.stop());
   if(sAudio)sAudio.getTracks().forEach(t=>t.stop());
@@ -186,7 +200,7 @@ function stopSend(){
 $('stopS').onclick=stopSend;
 
 /* ---------- Receiver ---------- */
-let rPeer=null,rTimer=0;
+let rPeer=null,rPc=null,rTimer=0,rStat=0,rState='';
 $('codeR').oninput=e=>{const d=e.target.value.replace(/\D/g,'').slice(0,6);e.target.value=d.length>3?d.slice(0,3)+' '+d.slice(3):d};
 $('codeR').onkeydown=e=>{if(e.key==='Enter')$('startR').click()};
 function startRecv(){
@@ -200,33 +214,55 @@ function startRecv(){
   log('browser: '+navigator.userAgent);
   rPeer=new Peer(PEER_CFG);
   rPeer.on('open',()=>{
-    log('broker connected, id='+rPeer.id);
+    log('broker connected');
     const conn=rPeer.connect(PFX+code,{reliable:true});
-    rTimer=setTimeout(()=>{st('R','No response. Check the code, that the sender is running, and that you have internet.','bad')},12000);
-    conn.on('open',()=>{log('data channel open');clearTimeout(rTimer);$('rIdle').classList.add('hide');$('rLive').classList.remove('hide');st('R','Connected · waiting for audio…','wait')});
-    conn.on('close',()=>{st('R','Sender stopped sharing','bad')});
-  });
-  rPeer.on('call',call=>{
-    log('incoming audio call');call.answer();
-    try{call.peerConnection.oniceconnectionstatechange=()=>{log('ice: '+call.peerConnection.iceConnectionState);if(call.peerConnection.iceConnectionState==='failed')st('R','Network blocked the connection. Try the same Wi‑Fi on both devices.','bad')}}catch(_){}
-    call.on('stream',s=>{
-
-      $('out').srcObject=s;if(!IOS)meter(s,$('meterR'),'r');
-      log('stream received, audio tracks='+s.getAudioTracks().length);
-      let n=0;const iv=setInterval(async()=>{if(++n>8||!rPeer){clearInterval(iv);return}try{(await call.peerConnection.getStats()).forEach(r=>{if(r.type==='inbound-rtp'&&r.kind==='audio')log('received '+r.bytesReceived+' bytes, level '+(r.audioLevel||0).toFixed(3))})}catch(_){}},2000);
-      $('out').play().then(()=>{log('playing');$('play').classList.add('hide')}).catch(er=>{log('play blocked: '+er.name);$('play').classList.remove('hide')});
-      st('R','Connected · playing','ok');
-    });
-    call.on('close',()=>st('R','Sender stopped sharing','bad'));
+    rTimer=setTimeout(()=>st('R','No response. Check the code, that the sender is running, and that you have internet.','bad'),12000);
+    let chain=Promise.resolve();
+    conn.on('open',()=>{log('sender found');clearTimeout(rTimer);$('rIdle').classList.add('hide');$('rLive').classList.remove('hide');st('R','Connected · negotiating audio…','wait')});
+    conn.on('data',d=>{chain=chain.then(()=>onSignal(conn,d)).catch(e=>log('signal error: '+e.message))});
+    conn.on('close',()=>st('R','Sender stopped sharing','bad'));
   });
   rPeer.on('error',e=>{
-    log('peer error: '+e.type+' '+(e.message||''));
-    clearTimeout(rTimer);
+    log('peer error: '+e.type+' '+(e.message||''));clearTimeout(rTimer);
     st('R',e.type==='peer-unavailable'?'No sender found with that code':'Network problem ('+e.type+')','bad');
   });
 }
+async function onSignal(conn,d){
+  if(d.t==='offer'){
+    log('offer received');
+    rPc=new RTCPeerConnection(PEER_CFG.config);
+    rPc.onicecandidate=e=>{if(e.candidate)conn.send({t:'ice',c:e.candidate.toJSON()})};
+    rPc.oniceconnectionstatechange=()=>log('ice: '+rPc.iceConnectionState);
+    rPc.onconnectionstatechange=()=>{log('link: '+rPc.connectionState);if(rPc.connectionState==='failed')st('R','Network blocked the audio link. Try the same Wi‑Fi on both devices.','bad')};
+    rPc.ontrack=e=>{
+      const s=e.streams[0]||new MediaStream([e.track]);
+      log('audio track received');
+      $('out').srcObject=s;
+      if(!IOS)meter(s,$('meterR'),'r');
+      $('out').play().then(()=>{log('playback started');$('play').classList.add('hide')}).catch(er=>{log('play blocked: '+er.name);$('play').classList.remove('hide')});
+      watchStats();
+    };
+    await rPc.setRemoteDescription({type:'offer',sdp:d.sdp});
+    await rPc.setLocalDescription(await rPc.createAnswer());
+    conn.send({t:'answer',sdp:rPc.localDescription.sdp});
+  }else if(d.t==='ice'&&rPc){await rPc.addIceCandidate(d.c)}
+}
+function watchStats(){
+  clearInterval(rStat);let last=0,quiet=0,tick=0;rState='';
+  rStat=setInterval(async()=>{
+    if(!rPc)return;
+    try{(await rPc.getStats()).forEach(r=>{
+      if(r.type==='inbound-rtp'&&r.kind==='audio'){
+        const grew=r.bytesReceived>last;last=r.bytesReceived;quiet=grew?0:quiet+1;
+        if(++tick%3===0)log('received '+r.bytesReceived+' bytes, level '+(r.audioLevel||0).toFixed(3));
+        const ns=grew?'ok':(quiet>=4?'bad':'wait');
+        if(ns!==rState){rState=ns;st('R',ns==='ok'?'Connected · receiving audio':ns==='bad'?'Connected, but no audio data is arriving':'Connected · waiting for audio…',ns)}
+      }})}catch(_){}
+  },1000);
+}
 function stopRecv(silent){
-  clearTimeout(rTimer);cancelAnimationFrame(raf.r);
+  clearTimeout(rTimer);clearInterval(rStat);cancelAnimationFrame(raf.r);
+  if(rPc){try{rPc.close()}catch(e){}rPc=null}
   if(rPeer){try{rPeer.destroy()}catch(e){}rPeer=null}
   $('out').srcObject=null;$('out').muted=false;
   try{if(altSrc)altSrc.disconnect()}catch(e){}altOn=false;$('alt').textContent='Can’t hear it? Try alternate playback';
