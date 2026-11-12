@@ -163,7 +163,7 @@ $('startS').onclick=async()=>{
     sStream=await navigator.mediaDevices.getDisplayMedia({video:true,audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
     const tr=sStream.getAudioTracks()[0];
     if(!tr){sStream.getTracks().forEach(t=>t.stop());sStream=null;st('S','No audio was shared. Tick “Share system audio” and try again.','bad');return}
-    sStream.getVideoTracks().forEach(t=>t.stop());
+    sStream.getVideoTracks().forEach(t=>{t.enabled=false});
     tr.contentHint='music';tr.onended=stopSend;
     sAudio=new MediaStream([tr]);
     $('sIdle').classList.add('hide');$('sLive').classList.remove('hide');
@@ -194,7 +194,7 @@ function startRecv(){
   stopRecv(true);
   st('R','Connecting…','wait');
   if(ac)ac.resume();
-  try{const o=$('out');o.src='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';o.play().catch(()=>{})}catch(e){}
+  if(IOS)try{const o=$('out');o.src='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';o.play().catch(()=>{})}catch(e){}
   log('browser: '+navigator.userAgent);
   rPeer=new Peer(PEER_CFG);
   rPeer.on('open',()=>{
@@ -211,6 +211,7 @@ function startRecv(){
       try{call.peerConnection.getReceivers().forEach(r=>{try{r.playoutDelayHint=0;r.jitterBufferTarget=0}catch(_){}})}catch(_){}
       $('out').srcObject=s;if(!IOS)meter(s,$('meterR'),'r');
       log('stream received, audio tracks='+s.getAudioTracks().length);
+      let n=0;const iv=setInterval(async()=>{if(++n>8||!rPeer){clearInterval(iv);return}try{(await call.peerConnection.getStats()).forEach(r=>{if(r.type==='inbound-rtp'&&r.kind==='audio')log('received '+r.bytesReceived+' bytes, level '+(r.audioLevel||0).toFixed(3))})}catch(_){}},2000);
       $('out').play().then(()=>{log('playing');$('play').classList.add('hide')}).catch(er=>{log('play blocked: '+er.name);$('play').classList.remove('hide')});
       st('R','Connected · playing','ok');
     });
