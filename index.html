@@ -90,6 +90,8 @@ footer{text-align:center;color:var(--muted);font-size:.8rem;margin-top:18px}
 <canvas class="meter" id="meterR" width="600" height="56"></canvas>
 <input type="range" id="vol" min="0" max="1" step="0.01" value="1" aria-label="Volume">
 <button class="btn primary ghost hide" id="play">Tap to start playback</button>
+<button class="btn ghost" id="beep">Play test beep</button>
+<button class="btn ghost" id="alt">Can’t hear it? Try alternate playback</button>
 <button class="btn ghost" id="stopR">Disconnect</button>
 </div>
 <div class="pill" id="pillR" data-s="idle"><span class="dot"></span><span id="statR">Ready</span></div>
@@ -208,7 +210,7 @@ function startRecv(){
     log('incoming audio call');call.answer();
     try{call.peerConnection.oniceconnectionstatechange=()=>{log('ice: '+call.peerConnection.iceConnectionState);if(call.peerConnection.iceConnectionState==='failed')st('R','Network blocked the connection. Try the same Wi‑Fi on both devices.','bad')}}catch(_){}
     call.on('stream',s=>{
-      try{call.peerConnection.getReceivers().forEach(r=>{try{r.playoutDelayHint=0;r.jitterBufferTarget=0}catch(_){}})}catch(_){}
+
       $('out').srcObject=s;if(!IOS)meter(s,$('meterR'),'r');
       log('stream received, audio tracks='+s.getAudioTracks().length);
       let n=0;const iv=setInterval(async()=>{if(++n>8||!rPeer){clearInterval(iv);return}try{(await call.peerConnection.getStats()).forEach(r=>{if(r.type==='inbound-rtp'&&r.kind==='audio')log('received '+r.bytesReceived+' bytes, level '+(r.audioLevel||0).toFixed(3))})}catch(_){}},2000);
@@ -226,7 +228,8 @@ function startRecv(){
 function stopRecv(silent){
   clearTimeout(rTimer);cancelAnimationFrame(raf.r);
   if(rPeer){try{rPeer.destroy()}catch(e){}rPeer=null}
-  $('out').srcObject=null;
+  $('out').srcObject=null;$('out').muted=false;
+  try{if(altSrc)altSrc.disconnect()}catch(e){}altOn=false;$('alt').textContent='Can’t hear it? Try alternate playback';
   $('rLive').classList.add('hide');$('rIdle').classList.remove('hide');$('play').classList.add('hide');
   if(!silent)st('R','Disconnected');
 }
@@ -234,6 +237,20 @@ $('startR').onclick=startRecv;
 $('stopR').onclick=()=>stopRecv();
 $('play').onclick=()=>{$('out').play();if(ac)ac.resume();$('play').classList.add('hide')};
 $('vol').oninput=e=>$('out').volume=e.target.value;
+
+/* ---------- Playback helpers ---------- */
+let altOn=false,altSrc=null;
+$('beep').onclick=()=>{
+  try{ac=ac||new AudioContext();ac.resume();const o=ac.createOscillator(),g=ac.createGain();g.gain.value=.2;o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+.6);log('test beep played')}catch(e){log('beep failed: '+e.message)}
+};
+$('alt').onclick=()=>{
+  const s=$('out').srcObject;if(!s){log('no stream yet');return}
+  try{
+    ac=ac||new AudioContext();ac.resume();
+    if(!altOn){$('out').muted=true;altSrc=ac.createMediaStreamSource(s);altSrc.connect(ac.destination);altOn=true;$('alt').textContent='Back to normal playback';log('alternate playback on')}
+    else{try{altSrc.disconnect()}catch(e){}$('out').muted=false;altOn=false;$('alt').textContent='Can’t hear it? Try alternate playback';log('alternate playback off')}
+  }catch(e){log('alt failed: '+e.message)}
+};
 
 /* ---------- Startup ---------- */
 (function init(){
